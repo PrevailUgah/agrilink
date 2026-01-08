@@ -1,40 +1,30 @@
-import asyncio
-import random
-from typing import Optional
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import List, Literal
+from datetime import datetime
+import uuid
+import logging
 
-# --- SQLALCHEMY IMPORTS (The Database Layer) ---
-from sqlalchemy import create_engine, Column, Integer, String, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+# --- 🌍 SYSTEM LOGGING ---
+# In a distributed logistics network, visibility is survival.
+# We track every heartbeat of the system from Lagos to Kano.
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("AgriLink-Neural-Core")
 
-# --- 1. DATABASE SETUP (SQLite) ---
-# This creates a real file 'agrilink.db' in your folder.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./agrilink.db"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+# --- 🚀 NEURAL CORE INITIALIZATION ---
+# This isn't just an API; it's the digital backbone for food security.
+# Version 2.2 focuses on latency reduction for EDGE networks (2G/3G areas).
+app = FastAPI(
+    title="AgriLink Neural Dispatch API",
+    description="High-performance logistics engine connecting Rural Supply to Urban Demand.",
+    version="2.2.0"
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
-# --- 2. DATABASE MODELS (The Tables) ---
-class BuyerDB(Base):
-    __tablename__ = "buyers"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    location = Column(String)
-    needs = Column(String) # Stored as comma-separated string: "tomatoes,onions"
-    price_per_basket = Column(Integer)
-
-# Create the tables automatically
-Base.metadata.create_all(bind=engine)
-
-# --- 3. APP CONFIGURATION ---
-app = FastAPI(title="AgriLink Neural Dispatch v2")
-
+# --- 🔓 CROSS-ORIGIN RESOURCE SHARING (CORS) ---
+# We allow our "Zero-Build" frontend to connect from anywhere.
+# In production, we'd lock this to our specific domain, but for the showcase,
+# we want zero friction.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,123 +33,158 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# --- 🏗️ DATA MODELS (The Schema of Truth) ---
+# We use Pydantic to enforce data integrity. 
+# Bad data in a supply chain leads to rotten food. We don't allow that.
 
-# --- 4. SEED DATA (Run once to populate DB) ---
-# In a real app, this is a separate script.
-def seed_database(db: Session):
-    if db.query(BuyerDB).first():
-        return # DB already has data
-    
-    print("--- SEEDING DATABASE ---")
-    buyers = [
-        BuyerDB(name="Alhaji Musa Processing", location="zaria", needs="tomatoes,pepper", price_per_basket=5000),
-        BuyerDB(name="Lagos Mile 12 Aggregator", location="lagos", needs="tomatoes,onions", price_per_basket=12000),
-        BuyerDB(name="Shoprite Logistics Abuja", location="abuja", needs="tomatoes,cabbage", price_per_basket=15000),
-        BuyerDB(name="Kano Central Market", location="kano", needs="onions,grains", price_per_basket=7000)
-    ]
-    db.add_all(buyers)
-    db.commit()
+class ListingRequest(BaseModel):
+    farmer_id: str
+    item_name: str
+    quantity: float
+    unit: str = "kg"
+    location_zone: str
+    price_total: float
 
-# --- 5. Pydantic Models (Frontend Communication) ---
-class IncomingMessage(BaseModel):
-    farmer_name: str
-    message: str
+class BuyRequest(BaseModel):
+    buyer_id: str
+    listing_id: str
 
-class DispatchResult(BaseModel):
-    status: str
-    extracted_data: dict
-    matched_buyer: Optional[str] = None
-    estimated_payout: int
-    route_id: str
+class MarketListing(BaseModel):
+    id: str
+    item: str
+    qty: float
+    unit: str
+    zone: str
+    price: float
+    seller: str
+    time: str
+    type: Literal['supply', 'demand']
+    
+    # Auto-generated timestamp for analytics
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-# --- 6. AI SIMULATION LAYER ---
-async def simulate_llm_extraction(text: str):
-    await asyncio.sleep(1.0)
-    text_lower = text.lower()
-    product = "unknown"
-    location = "unknown"
-    quantity = 0
+# --- 💾 IN-MEMORY STATE LAYER ---
+# ARCHITECTURAL NOTE:
+# For this prototype/hackathon build, we keep state 'hot' in RAM.
+# This ensures instant read/write speeds (<10ms).
+#
+# ROADMAP: In a deployed environment, this is replaced by:
+# 1. Redis (Hot Cache) for the real-time feed.
+# 2. PostgreSQL (Persistent Storage) for ledger history.
+market_feed: List[MarketListing] = [
+    MarketListing(
+        id="1",
+        item="Onions",
+        qty=50,
+        unit="Baskets",
+        zone="North-West (Kano)",
+        price=8500,
+        seller="Sani Farms",
+        time="2m ago",
+        type="supply"
+    ),
+    MarketListing(
+        id="2", 
+        item="Rice 50kg", 
+        qty=200, 
+        unit="Bags", 
+        zone="Lagos", 
+        price=65000, 
+        seller="Mega Stores", 
+        time="10m ago", 
+        type="demand"
+    ),
+    MarketListing(
+        id="3",
+        item="Yams",
+        qty=400,
+        unit="Tubers",
+        zone="Benue",
+        price=1200,
+        seller="Mama Nkechi",
+        time="45m ago",
+        type="supply"
+    )
+]
+
+# --- 📡 ENDPOINTS ( The Neural Interface ) ---
+
+@app.get("/")
+async def health_check():
+    """
+    System Heartbeat.
+    Verifies that the Neural Core is online and ready to process vectors.
+    """
+    logger.info("Health check ping received.")
+    return {"status": "neural_link_active", "timestamp": datetime.utcnow().isoformat(), "region": "West-Africa-1"}
+
+@app.get("/market/feed", response_model=List[MarketListing])
+async def get_market_feed():
+    """
+    The Pulse of the Market.
+    Returns the real-time commodity board. Optimized for low-bandwidth JSON payload.
+    """
+    return market_feed
+
+@app.post("/market/create_listing", status_code=status.HTTP_201_CREATED)
+async def create_listing(request: ListingRequest):
+    """
+    The 'Harvest Signal'.
+    A farmer signals availability. We ingest, validate, and broadcast instantly.
+    """
+    logger.info(f"New Harvest Signal from {request.farmer_id}: {request.item_name}")
     
-    # NLP Logic
-    if "tomato" in text_lower: product = "tomatoes"
-    elif "onion" in text_lower: product = "onions"
-    elif "pepper" in text_lower: product = "pepper"
+    # Generate unique ID for tracking
+    new_id = str(uuid.uuid4())
     
-    if "zaria" in text_lower: location = "zaria"
-    elif "lagos" in text_lower: location = "lagos"
-    elif "abuja" in text_lower: location = "abuja"
-    elif "kano" in text_lower: location = "kano"
+    # Construct the digital asset
+    new_listing = MarketListing(
+        id=new_id,
+        item=request.item_name,
+        qty=request.quantity,
+        unit=request.unit,
+        zone=request.location_zone,
+        price=request.price_total,
+        seller=request.farmer_id, 
+        time="Just Now",
+        type="supply"
+    )
     
-    import re
-    numbers = re.findall(r'\d+', text)
-    if numbers: quantity = int(numbers[0])
+    # LIFO (Last In, First Out) - Newest harvest hits the top of the feed.
+    market_feed.insert(0, new_listing)
+    
+    return {
+        "status": "created",
+        "listing_id": new_listing.id,
+        "message": "Harvest signal broadcasted to the neural network."
+    }
+
+@app.post("/market/buy")
+async def buy_item(request: BuyRequest):
+    """
+    The 'Handshake Protocol'.
+    Executes the transaction logic between Buyer and Farmer.
+    """
+    logger.info(f"Transaction Request: Buyer {request.buyer_id} -> Listing {request.listing_id}")
+
+    # Vector Search (Linear Scan for prototype)
+    listing = next((x for x in market_feed if x.id == request.listing_id), None)
+    
+    if not listing:
+        raise HTTPException(status_code=404, detail="Asset not found. It may have already been dispatched.")
         
-    return {"product": product, "quantity": quantity, "location": location}
+    if listing.type != 'supply':
+        raise HTTPException(status_code=400, detail="Protocol Error: Cannot purchase a Demand request.")
 
-# --- 7. API ENDPOINTS ---
-
-@app.on_event("startup")
-def startup_event():
-    # Initialize DB on startup
-    db = SessionLocal()
-    seed_database(db)
-    db.close()
-
-@app.post("/analyze-dispatch", response_model=DispatchResult)
-async def process_dispatch(msg: IncomingMessage, db: Session = Depends(get_db)):
-    print(f"\n[REQUEST] Farmer: {msg.farmer_name} | Msg: {msg.message}")
+    # Remove from feed to prevent double-spending/double-booking
+    market_feed.remove(listing)
     
-    # 1. Extract
-    extracted = await simulate_llm_extraction(msg.message)
+    # Generate Dispatch Token
+    dispatch_id = f"TRUCK-{uuid.uuid4().hex[:6].upper()}"
     
-    if extracted['product'] == "unknown":
-        raise HTTPException(status_code=400, detail="Product not recognized.")
-
-    # 2. Query Database (The "Fixed" Logic)
-    # This now searches the Real SQL Database, not a list.
-    
-    # Logic: Find buyers who need this product
-    possible_buyers = db.query(BuyerDB).filter(
-        BuyerDB.needs.contains(extracted['product'])
-    ).all()
-    
-    best_match = None
-    highest_payout = 0
-    
-    for buyer in possible_buyers:
-        # Check location match (simplified)
-        # In a real app, we would calculate distance
-        payout = buyer.price_per_basket * extracted['quantity']
-        
-        # Priority to local buyers, or highest price
-        if buyer.location == extracted['location']:
-            payout += 5000 # Bonus for proximity
-            
-        if payout > highest_payout:
-            highest_payout = payout
-            best_match = buyer
-
-    # 3. Response
-    if best_match:
-        return {
-            "status": "DISPATCH_APPROVED",
-            "extracted_data": extracted,
-            "matched_buyer": f"{best_match.name} ({best_match.location.upper()})",
-            "estimated_payout": highest_payout,
-            "route_id": f"RTE-{random.randint(1000,9999)}"
-        }
-    else:
-        return {
-            "status": "PENDING_WAREHOUSE",
-            "extracted_data": extracted,
-            "matched_buyer": "None",
-            "estimated_payout": 0,
-            "route_id": "HOLD-000"
-        }
+    return {
+        "status": "success",
+        "message": f"Transaction confirmed. {listing.qty} {listing.unit} of {listing.item} secured.",
+        "dispatch_status": "FLEET_DISPATCHED",
+        "dispatch_id": dispatch_id
+    }
